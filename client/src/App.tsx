@@ -81,7 +81,15 @@ export default function App() {
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [currentView, setCurrentView] = useState<'landing' | 'features' | 'how-it-works' | 'login' | 'dashboard' | 'interview-room'>('landing');
 
-  const [sessions, setSessions] = useState<Session[]>([]);
+  // User Email & Persistent Sessions State
+  const [userEmail, setUserEmail] = useState<string>(() => sessionStorage.getItem('user_email') || '');
+  const [sessions, setSessions] = useState<Session[]>(() => {
+    const email = sessionStorage.getItem('user_email');
+    if (!email) return [];
+    const saved = localStorage.getItem(`sessions_${email}`);
+    return saved ? JSON.parse(saved) : [];
+  });
+
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedFeedback, setSelectedFeedback] = useState<{ sessionTitle: string; report: FeedbackReport } | null>(null);
 
@@ -110,6 +118,30 @@ export default function App() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
 
+  // Fetch user profile email using access token
+  const fetchUserProfile = async (token: string) => {
+    try {
+      const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.email) {
+        setUserEmail(data.email);
+        sessionStorage.setItem('user_email', data.email);
+        
+        // Load sessions specific to this user email
+        const savedSessions = localStorage.getItem(`sessions_${data.email}`);
+        if (savedSessions) {
+          setSessions(JSON.parse(savedSessions));
+        } else {
+          setSessions([]);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch user profile:", err);
+    }
+  };
+
   // Fetch Drive Files helper using token
   const fetchDriveFilesList = async (token: string) => {
     setIsFetchingDrive(true);
@@ -136,7 +168,6 @@ export default function App() {
     }
   };
 
-  // Trigger Google Identity Services login & fetch genuine Google Drive files seamlessly
   const handleGoogleDriveClick = () => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     if (!clientId) {
@@ -144,7 +175,6 @@ export default function App() {
       return;
     }
 
-    // If we already have a valid token from sign-in, use it directly without popping up anything!
     if (googleAccessToken) {
       fetchDriveFilesList(googleAccessToken);
       return;
@@ -153,11 +183,12 @@ export default function App() {
     const initAuth = () => {
       const client = (window as any).google.accounts.oauth2.initTokenClient({
         client_id: clientId,
-        scope: 'https://www.googleapis.com/auth/drive.readonly',
+        scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email',
         callback: async (tokenResponse: any) => {
           if (tokenResponse && tokenResponse.access_token) {
             setGoogleAccessToken(tokenResponse.access_token);
             sessionStorage.setItem('google_access_token', tokenResponse.access_token);
+            await fetchUserProfile(tokenResponse.access_token);
             fetchDriveFilesList(tokenResponse.access_token);
           } else {
             setIsFetchingDrive(false);
@@ -178,6 +209,13 @@ export default function App() {
       initAuth();
     }
   };
+
+  // Save sessions to localStorage whenever sessions state changes for the current user
+  useEffect(() => {
+    if (userEmail) {
+      localStorage.setItem(`sessions_${userEmail}`, JSON.stringify(sessions));
+    }
+  }, [sessions, userEmail]);
 
   // Handle browser back button navigation via window history states
   useEffect(() => {
@@ -269,7 +307,6 @@ export default function App() {
     }
   }, [chatMessages]);
 
-  // Connected to backend server REST API with response time tracking
   const callAiApi = async (userPrompt: string): Promise<string> => {
     try {
       const responseTimeSec = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
@@ -387,10 +424,13 @@ export default function App() {
               </>
             ) : (
               <>
-                <span className="user-welcome-text">Welcome, Student</span>
+                <span className="user-welcome-text">Welcome, {userEmail || 'Student'}</span>
                 <button className="signin-btn" onClick={() => {
                   setGoogleAccessToken(null);
+                  setUserEmail('');
                   sessionStorage.removeItem('google_access_token');
+                  sessionStorage.removeItem('user_email');
+                  setSessions([]);
                   changeView('landing');
                 }}>Sign Out</button>
               </>
@@ -617,11 +657,12 @@ export default function App() {
                     const initLoginAuth = () => {
                       const client = (window as any).google.accounts.oauth2.initTokenClient({
                         client_id: clientId,
-                        scope: 'https://www.googleapis.com/auth/drive.readonly',
-                        callback: (tokenResponse: any) => {
+                        scope: 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/userinfo.email',
+                        callback: async (tokenResponse: any) => {
                           if (tokenResponse && tokenResponse.access_token) {
                             setGoogleAccessToken(tokenResponse.access_token);
                             sessionStorage.setItem('google_access_token', tokenResponse.access_token);
+                            await fetchUserProfile(tokenResponse.access_token);
                             changeView('dashboard');
                           }
                         },
