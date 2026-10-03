@@ -63,7 +63,6 @@ interface ChatMessage {
 interface Session {
   id: string;
   title: string;
-  date: string;
   score: number;
   grade: 'high' | 'mid';
   feedback: FeedbackReport;
@@ -91,7 +90,7 @@ export default function App() {
   });
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [selectedFeedback, setSelectedFeedback] = useState<{ sessionTitle: string; report: FeedbackReport } | null>(null);
+  const [selectedFeedback, setSelectedFeedback] = useState<{ sessionTitle: string; sessionScore: number; messages: ChatMessage[]; report: FeedbackReport } | null>(null);
 
   const initialAiGreeting = "Hello! I am your AI Interview Coach. Let's begin your simulation. Tell me a bit about yourself or the role you are targeting.";
 
@@ -118,6 +117,15 @@ export default function App() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
 
+  // Unified Live Score Calculator
+  const calculateLiveScore = (messages: ChatMessage[]) => {
+    const userExchanges = messages.filter(m => m.sender === 'user').length;
+    if (userExchanges <= 1) return 65;
+    if (userExchanges <= 3) return 78;
+    if (userExchanges <= 6) return 88;
+    return 95;
+  };
+
   // Fetch user profile email using access token
   const fetchUserProfile = async (token: string) => {
     try {
@@ -129,7 +137,6 @@ export default function App() {
         setUserEmail(data.email);
         sessionStorage.setItem('user_email', data.email);
         
-        // Load sessions specific to this user email
         const savedSessions = localStorage.getItem(`sessions_${data.email}`);
         if (savedSessions) {
           setSessions(JSON.parse(savedSessions));
@@ -270,12 +277,13 @@ export default function App() {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
+    const initialScore = calculateLiveScore([initialGreetingMsg]);
+
     const newSession: Session = {
       id: newSessionId,
       title: resumeFileName ? `Targeted Simulation (${resumeFileName})` : 'General Technical & Behavioral Simulation',
-      date: 'Just now',
-      score: 85,
-      grade: 'high',
+      score: initialScore,
+      grade: initialScore >= 80 ? 'high' : 'mid',
       feedback: {
         summary: 'Completed live interactive simulation with sound structural clarity and logical reasoning.',
         strengths: ['Clear and concise articulation', 'Logical progression of ideas', 'Good engagement'],
@@ -294,9 +302,18 @@ export default function App() {
   useEffect(() => {
     if (activeSessionId) {
       setSessions((prevSessions) =>
-        prevSessions.map((s) =>
-          s.id === activeSessionId ? { ...s, messages: chatMessages } : s
-        )
+        prevSessions.map((s) => {
+          if (s.id === activeSessionId) {
+            const liveScore = calculateLiveScore(chatMessages);
+            return {
+              ...s,
+              score: liveScore,
+              grade: liveScore >= 80 ? 'high' : 'mid',
+              messages: chatMessages
+            };
+          }
+          return s;
+        })
       );
     }
   }, [chatMessages, activeSessionId]);
@@ -390,11 +407,55 @@ export default function App() {
   };
 
   const hasSessions = sessions.length > 0;
-  const avgScore = hasSessions
-    ? Math.round(sessions.reduce((acc, curr) => acc + curr.score, 0) / sessions.length) + '%'
-    : '—';
+  const avgNumericScore = hasSessions
+    ? Math.round(sessions.reduce((acc, curr) => acc + curr.score, 0) / sessions.length)
+    : 0;
+  const avgScore = hasSessions ? avgNumericScore + '%' : '—';
   const totalSimulations = sessions.length;
-  const readinessTier = hasSessions ? 'Elite' : 'Uncalibrated';
+
+  const getReadinessTier = (score: number, count: number) => {
+    if (count === 0) return 'Uncalibrated';
+    if (score < 60) return 'Developing';
+    if (score < 75) return 'Competent';
+    if (score < 90) return 'Strong Contender';
+    return 'Elite';
+  };
+
+  const readinessTier = getReadinessTier(avgNumericScore, totalSimulations);
+
+  const generateAdaptiveSummary = (msgCount: number, score: number) => {
+    const userExchanges = Math.floor(msgCount / 2);
+    let engagementNote = "";
+    if (userExchanges <= 1) {
+      engagementNote = "The candidate initiated the chat with introductory remarks.";
+    } else if (userExchanges <= 3) {
+      engagementNote = `The candidate completed ${userExchanges} conversational exchanges with steady pacing.`;
+    } else {
+      engagementNote = `The candidate maintained an active dialogue consisting of ${userExchanges} conversational turns, displaying high engagement.`;
+    }
+
+    let qualityNote = "";
+    if (score >= 80) {
+      qualityNote = "The interviewee knows how to talk professionally, articulates points clearly, and maintains strong composure.";
+    } else if (score >= 60) {
+      qualityNote = "The interviewee communicates decently, though expanding on specifics would elevate the performance.";
+    } else {
+      qualityNote = "Communication was minimal; developing a structured thought process will improve results.";
+    }
+
+    return `${engagementNote} ${qualityNote}`;
+  };
+
+  const generateDynamicStrengths = (msgCount: number) => {
+    const list = ['Clear and concise articulation', 'Good initial engagement'];
+    if (msgCount > 4) {
+      list.push('Maintained sustained back-and-forth communication flow');
+    }
+    if (msgCount > 8) {
+      list.push('Demonstrated persistent adaptability across multiple dialogue turns');
+    }
+    return list;
+  };
 
   return (
     <div className="app-container">
@@ -424,7 +485,7 @@ export default function App() {
               </>
             ) : (
               <>
-                <span className="user-welcome-text">Welcome, {userEmail || 'Student'}</span>
+                <span className="user-welcome-text">Welcome!</span>
                 <button className="signin-btn" onClick={() => {
                   setGoogleAccessToken(null);
                   setUserEmail('');
@@ -524,7 +585,7 @@ export default function App() {
                   gap: '1.5rem',
                   boxShadow: '0 0 20px rgba(52, 211, 153, 0.12), inset 0 1px 0 rgba(52, 211, 153, 0.2)'
                 }}>
-                  <div style={{ fontSize: '2.2rem', padding: '12px', background: 'rgba(52, 211, 153, 0.1)', borderRadius: '12px', border: '1px solid rgba(52, 211, 153, 0.3)', flexShrink: 0 }}>☁️</div>
+                  <div style={{ fontSize: '2.2rem', padding: '12px', background: 'rgba(52, 211, 153, 0.1)', borderRadius: '12px', border: '1px solid rgba(52, 211, 153, 0.3)', flexShrink: 0 }}>☁️️</div>
                   <div>
                     <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#f8fafc', marginBottom: '0.3rem' }}>Smart Google Drive & CV Sync</h3>
                     <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>
@@ -745,11 +806,18 @@ export default function App() {
                       <div key={session.id} className="history-item">
                         <div>
                           <strong>{session.title}</strong>
-                          <span className="history-date">{session.date}</span>
                         </div>
                         <div className="history-right-group">
                           <div className={`history-score ${session.grade}`}>{session.score}%</div>
-                          <button className="view-report-btn" onClick={() => setSelectedFeedback({ sessionTitle: session.title, report: session.feedback })}>
+                          <button
+                            className="view-report-btn"
+                            onClick={() => setSelectedFeedback({
+                              sessionTitle: session.title,
+                              sessionScore: session.score,
+                              messages: session.messages || [],
+                              report: session.feedback
+                            })}
+                          >
                             View Feedback Report
                           </button>
                         </div>
@@ -879,6 +947,51 @@ export default function App() {
             </div>
           )}
         </main>
+
+        {/* FEEDBACK REPORT MODAL */}
+        {selectedFeedback && (
+          <div className="modal-overlay" onClick={() => setSelectedFeedback(null)}>
+            <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '550px', width: '90%', background: '#0f172a', border: '1px solid #334155', borderRadius: '16px', padding: '2rem', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1e293b', paddingBottom: '1rem', marginBottom: '1.2rem' }}>
+                <div>
+                  <h3 style={{ color: '#f8fafc', fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>📋 Session Feedback Report</h3>
+                  <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '4px 0 0 0' }}>{selectedFeedback.sessionTitle}</p>
+                </div>
+                <button onClick={() => setSelectedFeedback(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '1.5rem', cursor: 'pointer' }}>×</button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem', maxHeight: '400px', overflowY: 'auto', paddingRight: '4px' }}>
+                <div style={{ background: 'rgba(34, 211, 238, 0.1)', border: '1px solid rgba(34, 211, 238, 0.3)', borderRadius: '10px', padding: '1.2rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: 600, color: '#22d3ee', fontSize: '0.95rem' }}>Evaluated Score</span>
+                    <span style={{ fontWeight: 700, color: '#22d3ee', fontSize: '1.15rem' }}>{selectedFeedback.sessionScore}%</span>
+                  </div>
+                  <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: 1.6, margin: 0 }}>
+                    {generateAdaptiveSummary(selectedFeedback.messages.length, selectedFeedback.sessionScore)}
+                  </p>
+                </div>
+
+                <div>
+                  <h4 style={{ color: '#f8fafc', fontSize: '0.95rem', marginBottom: '8px' }}>✨ Key Strengths (Analyzed from {Math.floor(selectedFeedback.messages.length / 2)} conversational exchanges)</h4>
+                  <ul style={{ margin: 0, paddingLeft: '1.2rem', color: '#34d399', fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {generateDynamicStrengths(selectedFeedback.messages.length).map((s, idx) => (
+                      <li key={idx}><span style={{ color: '#cbd5e1' }}>{s}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              <div style={{ marginTop: '1.5rem', textAlign: 'right', borderTop: '1px solid #1e293b', paddingTop: '1rem' }}>
+                <button
+                  onClick={() => setSelectedFeedback(null)}
+                  style={{ background: '#22d3ee', color: '#0f172a', border: 'none', padding: '0.6rem 1.4rem', fontWeight: 600, borderRadius: '8px', cursor: 'pointer' }}
+                >
+                  Close Report
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* GOOGLE DRIVE PICKER MODAL WINDOW */}
         {showDriveModal && (
