@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import cors from 'cors';
 import mongoose from 'mongoose';
+import { User, Session } from './user';
 
 // Explicitly load .env from the current server directory
 dotenv.config({ path: path.join(__dirname, '.env') });
