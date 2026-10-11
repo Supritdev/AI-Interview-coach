@@ -123,6 +123,33 @@ export default function App() {
     return 95;
   };
 
+  const loadSessionsForUser = async (email: string) => {
+    try {
+      const sessionRes = await fetch(`${API_URL}/api/sessions/${email}`);
+      const sessionData = await sessionRes.json();
+      
+      if (sessionData.sessions) {
+        const formattedSessions = sessionData.sessions.map((s: any) => ({
+          id: s.sessionId || s._id,
+          title: s.title,
+          score: s.score,
+          grade: s.grade,
+          messages: s.messages,
+          feedback: {
+            summary: 'Completed live interactive simulation with sound structural clarity.',
+            strengths: ['Clear articulation', 'Good engagement'],
+            improvements: ['Add deeper metrics']
+          }
+        }));
+        setSessions(formattedSessions);
+      } else {
+        setSessions([]);
+      }
+    } catch (err) {
+      console.error("Failed to fetch sessions from MongoDB:", err);
+    }
+  };
+
   // Fetch user profile email and load sessions from MongoDB backend
   const fetchUserProfile = async (token: string) => {
     try {
@@ -133,35 +160,23 @@ export default function App() {
       if (data.email) {
         setUserEmail(data.email);
         sessionStorage.setItem('user_email', data.email);
-        
-        // Fetch session history from MongoDB backend
-        const sessionRes = await fetch(`${API_URL}/api/sessions/${data.email}`);
-        const sessionData = await sessionRes.json();
-        
-        if (sessionData.sessions) {
-          const formattedSessions = sessionData.sessions.map((s: any) => ({
-            id: s._id,
-            title: s.title,
-            score: s.score,
-            grade: s.grade,
-            messages: s.messages,
-            feedback: {
-              summary: 'Completed live interactive simulation with sound structural clarity.',
-              strengths: ['Clear articulation', 'Good engagement'],
-              improvements: ['Add deeper metrics']
-            }
-          }));
-          setSessions(formattedSessions);
-        } else {
-          setSessions([]);
-        }
+        await loadSessionsForUser(data.email);
       }
     } catch (err) {
       console.error("Failed to fetch user profile or sessions:", err);
     }
   };
 
-  // Helper to save session directly to MongoDB backend
+  // Automatically reload user sessions on initial app mount if email is in storage
+  useEffect(() => {
+    const savedEmail = sessionStorage.getItem('user_email');
+    if (savedEmail) {
+      setUserEmail(savedEmail);
+      loadSessionsForUser(savedEmail);
+    }
+  }, []);
+
+  // Helper to save session directly to MongoDB backend using unique sessionId
   const saveSessionToCloud = async (sessionToSave: Session) => {
     if (!userEmail) return;
     try {
@@ -170,6 +185,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userEmail,
+          sessionId: sessionToSave.id,
           title: sessionToSave.title,
           readinessTier,
           score: sessionToSave.score,
@@ -295,7 +311,7 @@ export default function App() {
   };
 
   const handleNewInterview = () => {
-    const newSessionId = Date.now().toString();
+    const newSessionId = `session_${Date.now()}`;
     const initialGreetingMsg: ChatMessage = {
       sender: 'ai',
       text: initialAiGreeting,
@@ -306,7 +322,7 @@ export default function App() {
 
     const newSession: Session = {
       id: newSessionId,
-      title: resumeFileName ? `Targeted Simulation (${resumeFileName})` : 'General Technical & Behavioral Simulation',
+      title: resumeFileName ? `Targeted Simulation (${resumeFileName})` : `Technical Simulation - ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}`,
       score: initialScore,
       grade: initialScore >= 80 ? 'high' : 'mid',
       feedback: {
@@ -355,12 +371,16 @@ export default function App() {
   const callAiApi = async (userPrompt: string): Promise<string> => {
     try {
       const responseTimeSec = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
+      const activeSession = sessions.find(s => s.id === activeSessionId);
       
       const res = await fetch(`${API_URL}/api/interview/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userPrompt,
+          userEmail: userEmail,
+          sessionId: activeSessionId,
+          title: activeSession ? activeSession.title : 'General Technical & Behavioral Simulation',
           resumeContext: resumeFileName ? `Uploaded file: ${resumeFileName}` : 'General professional profile',
           responseTimeSec: responseTimeSec
         })
@@ -434,11 +454,11 @@ export default function App() {
   };
 
   const hasSessions = sessions.length > 0;
+  const totalSimulations = sessions.length;
   const avgNumericScore = hasSessions
-    ? Math.round(sessions.reduce((acc, curr) => acc + curr.score, 0) / sessions.length)
+    ? Math.round(sessions.reduce((acc, curr) => acc + (curr.score || 0), 0) / totalSimulations)
     : 0;
   const avgScore = hasSessions ? avgNumericScore + '%' : '—';
-  const totalSimulations = sessions.length;
 
   const getReadinessTier = (score: number, count: number) => {
     if (count === 0) return 'Uncalibrated';
@@ -750,8 +770,18 @@ export default function App() {
                           if (tokenResponse && tokenResponse.access_token) {
                             setGoogleAccessToken(tokenResponse.access_token);
                             sessionStorage.setItem('google_access_token', tokenResponse.access_token);
-                            await fetchUserProfile(tokenResponse.access_token);
-                            changeView('dashboard');
+                            
+                            // Fetch user info and await loading their MongoDB history before changing view
+                            const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                              headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
+                            });
+                            const data = await res.json();
+                            if (data.email) {
+                              setUserEmail(data.email);
+                              sessionStorage.setItem('user_email', data.email);
+                              await loadSessionsForUser(data.email);
+                              changeView('dashboard');
+                            }
                           }
                         },
                       });

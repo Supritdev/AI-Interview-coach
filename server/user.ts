@@ -1,4 +1,3 @@
-// server/models/dbModels.ts
 import mongoose, { Schema, Document } from 'mongoose';
 
 // 1. User Schema & Model
@@ -20,13 +19,14 @@ export const User = mongoose.model<IUser>('User', UserSchema);
 
 // 2. Session Schema & Model
 export interface IMessage {
-  sender: 'user' | 'ai';
+  sender: 'user' | 'assistant';
   text: string;
-  timestamp: Date;
+  timestamp: string;
 }
 
 export interface ISession extends Document {
   userEmail: string;
+  sessionId: string; // ✅ Added sessionId
   title: string;
   readinessTier: string;
   score: number;
@@ -36,13 +36,14 @@ export interface ISession extends Document {
 }
 
 const MessageSchema = new Schema({
-  sender: { type: String, required: true },
+  sender: { type: String, required: true, enum: ['user', 'assistant'] },
   text: { type: String, required: true },
   timestamp: { type: String, required: true } 
 });
 
 const SessionSchema = new Schema<ISession>({
   userEmail: { type: String, required: true, index: true },
+  sessionId: { type: String, required: true, index: true }, // ✅ Added sessionId to schema
   title: { type: String, required: true },
   readinessTier: { type: String, default: 'Uncalibrated' },
   score: { type: Number, default: 0 },
