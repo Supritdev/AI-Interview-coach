@@ -80,14 +80,9 @@ export default function App() {
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [currentView, setCurrentView] = useState<'landing' | 'features' | 'how-it-works' | 'login' | 'dashboard' | 'interview-room'>('landing');
 
-  // User Email & Persistent Sessions State
+  // User Email & Backend Sessions State
   const [userEmail, setUserEmail] = useState<string>(() => sessionStorage.getItem('user_email') || '');
-  const [sessions, setSessions] = useState<Session[]>(() => {
-    const email = sessionStorage.getItem('user_email');
-    if (!email) return [];
-    const saved = localStorage.getItem(`sessions_${email}`);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [sessions, setSessions] = useState<Session[]>([]);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedFeedback, setSelectedFeedback] = useState<{ sessionTitle: string; sessionScore: number; messages: ChatMessage[]; report: FeedbackReport } | null>(null);
@@ -117,6 +112,8 @@ export default function App() {
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
 
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
   // Unified Live Score Calculator
   const calculateLiveScore = (messages: ChatMessage[]) => {
     const userExchanges = messages.filter(m => m.sender === 'user').length;
@@ -126,7 +123,7 @@ export default function App() {
     return 95;
   };
 
-  // Fetch user profile email using access token
+  // Fetch user profile email and load sessions from MongoDB backend
   const fetchUserProfile = async (token: string) => {
     try {
       const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -137,15 +134,51 @@ export default function App() {
         setUserEmail(data.email);
         sessionStorage.setItem('user_email', data.email);
         
-        const savedSessions = localStorage.getItem(`sessions_${data.email}`);
-        if (savedSessions) {
-          setSessions(JSON.parse(savedSessions));
+        // Fetch session history from MongoDB backend
+        const sessionRes = await fetch(`${API_URL}/api/sessions/${data.email}`);
+        const sessionData = await sessionRes.json();
+        
+        if (sessionData.sessions) {
+          const formattedSessions = sessionData.sessions.map((s: any) => ({
+            id: s._id,
+            title: s.title,
+            score: s.score,
+            grade: s.grade,
+            messages: s.messages,
+            feedback: {
+              summary: 'Completed live interactive simulation with sound structural clarity.',
+              strengths: ['Clear articulation', 'Good engagement'],
+              improvements: ['Add deeper metrics']
+            }
+          }));
+          setSessions(formattedSessions);
         } else {
           setSessions([]);
         }
       }
     } catch (err) {
-      console.error("Failed to fetch user profile:", err);
+      console.error("Failed to fetch user profile or sessions:", err);
+    }
+  };
+
+  // Helper to save session directly to MongoDB backend
+  const saveSessionToCloud = async (sessionToSave: Session) => {
+    if (!userEmail) return;
+    try {
+      await fetch(`${API_URL}/api/sessions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userEmail,
+          title: sessionToSave.title,
+          readinessTier,
+          score: sessionToSave.score,
+          grade: sessionToSave.grade,
+          messages: sessionToSave.messages
+        })
+      });
+    } catch (err) {
+      console.error("Failed to save session to MongoDB:", err);
     }
   };
 
@@ -153,7 +186,6 @@ export default function App() {
   const fetchDriveFilesList = async (token: string) => {
     setIsFetchingDrive(true);
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'https://ai-interview-coach-qux6.onrender.com';
       const res = await fetch(`${API_URL}/api/drive/files`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -216,13 +248,6 @@ export default function App() {
       initAuth();
     }
   };
-
-  // Save sessions to localStorage whenever sessions state changes for the current user
-  useEffect(() => {
-    if (userEmail) {
-      localStorage.setItem(`sessions_${userEmail}`, JSON.stringify(sessions));
-    }
-  }, [sessions, userEmail]);
 
   // Handle browser back button navigation via window history states
   useEffect(() => {
@@ -296,6 +321,7 @@ export default function App() {
     setActiveSessionId(newSessionId);
     setChatMessages([initialGreetingMsg]);
     questionStartTimeRef.current = Date.now();
+    saveSessionToCloud(newSession);
     changeView('interview-room');
   };
 
@@ -305,12 +331,14 @@ export default function App() {
         prevSessions.map((s) => {
           if (s.id === activeSessionId) {
             const liveScore = calculateLiveScore(chatMessages);
-            return {
+            const updatedSession = {
               ...s,
               score: liveScore,
               grade: liveScore >= 80 ? 'high' : 'mid',
               messages: chatMessages
             };
+            saveSessionToCloud(updatedSession);
+            return updatedSession;
           }
           return s;
         })
@@ -327,7 +355,6 @@ export default function App() {
   const callAiApi = async (userPrompt: string): Promise<string> => {
     try {
       const responseTimeSec = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
-      const API_URL = import.meta.env.VITE_API_URL || 'https://ai-interview-coach-qux6.onrender.com';
       
       const res = await fetch(`${API_URL}/api/interview/chat`, {
         method: 'POST',
@@ -349,7 +376,7 @@ export default function App() {
       return data.reply || "Let's continue. Can you describe how you handle pressure in team environments?";
     } catch (err) {
       console.error("Backend server connection error:", err);
-      return "⚠️ Unable to connect to your backend server. Please ensure Render is running.";
+      return "⚠️ Unable to connect to your backend server. Please ensure your backend is running.";
     }
   };
 
@@ -585,7 +612,7 @@ export default function App() {
                   gap: '1.5rem',
                   boxShadow: '0 0 20px rgba(52, 211, 153, 0.12), inset 0 1px 0 rgba(52, 211, 153, 0.2)'
                 }}>
-                  <div style={{ fontSize: '2.2rem', padding: '12px', background: 'rgba(52, 211, 153, 0.1)', borderRadius: '12px', border: '1px solid rgba(52, 211, 153, 0.3)', flexShrink: 0 }}>☁️️</div>
+                  <div style={{ fontSize: '2.2rem', padding: '12px', background: 'rgba(52, 211, 153, 0.1)', borderRadius: '12px', border: '1px solid rgba(52, 211, 153, 0.3)', flexShrink: 0 }}>☁</div>
                   <div>
                     <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#f8fafc', marginBottom: '0.3rem' }}>Smart Google Drive & CV Sync</h3>
                     <p style={{ color: '#cbd5e1', fontSize: '0.9rem', lineHeight: 1.5, margin: 0 }}>

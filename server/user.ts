@@ -35,10 +35,10 @@ export interface ISession extends Document {
   createdAt: Date;
 }
 
-const MessageSchema = new Schema<IMessage>({
-  sender: { type: String, enum: ['user', 'ai'], required: true },
+const MessageSchema = new Schema({
+  sender: { type: String, required: true },
   text: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now }
+  timestamp: { type: String, required: true } 
 });
 
 const SessionSchema = new Schema<ISession>({
