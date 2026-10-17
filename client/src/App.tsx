@@ -125,7 +125,12 @@ export default function App() {
 
   const loadSessionsForUser = async (email: string) => {
     try {
-      const sessionRes = await fetch(`${API_URL}/api/sessions/${email}`);
+      const token = sessionStorage.getItem('google_access_token') || googleAccessToken;
+      const sessionRes = await fetch(`${API_URL}/api/sessions/${email}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
       const sessionData = await sessionRes.json();
       
       if (sessionData.sessions) {
@@ -176,15 +181,18 @@ export default function App() {
     }
   }, []);
 
-  // Helper to save session directly to MongoDB backend using unique sessionId
+  // Helper to save session directly to MongoDB backend using unique sessionId & Auth Header
   const saveSessionToCloud = async (sessionToSave: Session) => {
     if (!userEmail) return;
     try {
+      const token = sessionStorage.getItem('google_access_token') || googleAccessToken;
       await fetch(`${API_URL}/api/sessions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
-          userEmail,
           sessionId: sessionToSave.id,
           title: sessionToSave.title,
           readinessTier,
@@ -198,13 +206,17 @@ export default function App() {
     }
   };
 
-  // Fetch Drive Files helper using token
+  // Fetch Drive Files helper using token & Auth Header
   const fetchDriveFilesList = async (token: string) => {
     setIsFetchingDrive(true);
     try {
+      const authToken = sessionStorage.getItem('google_access_token') || googleAccessToken;
       const res = await fetch(`${API_URL}/api/drive/files`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
         body: JSON.stringify({ accessToken: token })
       });
 
@@ -372,13 +384,16 @@ export default function App() {
     try {
       const responseTimeSec = Math.round((Date.now() - questionStartTimeRef.current) / 1000);
       const activeSession = sessions.find(s => s.id === activeSessionId);
+      const token = sessionStorage.getItem('google_access_token') || googleAccessToken;
       
       const res = await fetch(`${API_URL}/api/interview/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           message: userPrompt,
-          userEmail: userEmail,
           sessionId: activeSessionId,
           title: activeSession ? activeSession.title : 'General Technical & Behavioral Simulation',
           resumeContext: resumeFileName ? `Uploaded file: ${resumeFileName}` : 'General professional profile',

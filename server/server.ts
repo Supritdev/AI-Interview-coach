@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 dns.setServers(['8.8.8.8', '1.1.1.1']); 
 
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import cors from 'cors';
@@ -17,22 +17,57 @@ const MONGO_URI = process.env.MONGO_URI || '';
 app.use(cors());
 app.use(express.json());
 
+// ==========================================
+// Security Middleware: Google Token Verification
+// ==========================================
+export interface AuthenticatedRequest extends Request {
+  userEmail?: string;
+}
+
+const verifyGoogleToken = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: "Unauthorized: Missing or malformed token" });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const googleData = (await googleRes.json()) as any;
+
+    if (!googleData.email) {
+      return res.status(401).json({ error: "Unauthorized: Invalid Google token" });
+    }
+
+    // Securely inject verified email into request object
+    req.userEmail = googleData.email;
+    next();
+  } catch (error) {
+    console.error("Auth Middleware Error:", error);
+    return res.status(401).json({ error: "Unauthorized: Token verification failed" });
+  }
+};
+
 app.get('/', (req: Request, res: Response) => {
   res.send('AI Interview Coach API (OpenRouter + Drive) is running...');
 });
 
 // ==========================================
-// Database Session Routes
+// Database Session Routes (Secured with Middleware)
 // ==========================================
 
 // 1. Save or Update an interview session (POST)
-// In server.tsx - /api/sessions
-app.post('/api/sessions', async (req: Request, res: Response) => {
+app.post('/api/sessions', verifyGoogleToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { userEmail, sessionId, title, readinessTier, score, grade, messages } = req.body;
+    const userEmail = req.userEmail;
+    const { sessionId, title, readinessTier, score, grade, messages } = req.body;
     
-    if (!userEmail || !sessionId) {
-      return res.status(400).json({ error: "Missing userEmail or sessionId" });
+    if (!sessionId) {
+      return res.status(400).json({ error: "Missing sessionId" });
     }
 
     const savedSession = await Session.findOneAndUpdate(
@@ -57,9 +92,14 @@ app.post('/api/sessions', async (req: Request, res: Response) => {
 });
 
 // 2. Fetch all past sessions for a specific user (GET)
-app.get('/api/sessions/:email', async (req: Request, res: Response) => {
+app.get('/api/sessions/:email', verifyGoogleToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { email } = req.params;
+    
+    if (req.userEmail !== email) {
+      return res.status(403).json({ error: "Forbidden: Access denied to other user data" });
+    }
+
     const sessions = await Session.find({ userEmail: email }).sort({ createdAt: -1 });
     res.json({ sessions });
   } catch (error: any) {
@@ -69,13 +109,19 @@ app.get('/api/sessions/:email', async (req: Request, res: Response) => {
 });
 
 // 3. Fetch a single session's details by ID (GET)
-app.get('/api/session/details/:id', async (req: Request, res: Response) => {
+app.get('/api/session/details/:id', verifyGoogleToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const session = await Session.findById(id);
+    
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
     }
+
+    if (session.userEmail !== req.userEmail) {
+      return res.status(403).json({ error: "Forbidden: Access denied" });
+    }
+
     res.json(session);
   } catch (error: any) {
     console.error("Fetch Single Session Error:", error);
@@ -86,9 +132,10 @@ app.get('/api/session/details/:id', async (req: Request, res: Response) => {
 // ==========================================
 // AI Interview Chat & Evaluation Endpoint
 // ==========================================
-app.post('/api/interview/chat', async (req: Request, res: Response) => {
+app.post('/api/interview/chat', verifyGoogleToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { message, resumeContext, responseTimeSec, userEmail, title, sessionId } = req.body;
+    const userEmail = req.userEmail;
+    const { message, resumeContext, responseTimeSec, title, sessionId } = req.body;
     
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
@@ -165,7 +212,7 @@ app.post('/api/interview/chat', async (req: Request, res: Response) => {
 });
 
 // Google Drive Files Proxy Endpoint
-app.post('/api/drive/files', async (req: Request, res: Response) => {
+app.post('/api/drive/files', verifyGoogleToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { accessToken } = req.body;
     if (!accessToken) {
