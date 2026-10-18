@@ -83,6 +83,7 @@ export default function App() {
   // User Email & Backend Sessions State
   const [userEmail, setUserEmail] = useState<string>(() => sessionStorage.getItem('user_email') || '');
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [isFetchingSessions, setIsFetchingSessions] = useState<boolean>(false);
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [selectedFeedback, setSelectedFeedback] = useState<{ sessionTitle: string; sessionScore: number; messages: ChatMessage[]; report: FeedbackReport } | null>(null);
@@ -786,16 +787,25 @@ export default function App() {
                             setGoogleAccessToken(tokenResponse.access_token);
                             sessionStorage.setItem('google_access_token', tokenResponse.access_token);
                             
-                            // Fetch user info and await loading their MongoDB history before changing view
-                            const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                              headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
-                            });
-                            const data = await res.json();
-                            if (data.email) {
-                              setUserEmail(data.email);
-                              sessionStorage.setItem('user_email', data.email);
-                              await loadSessionsForUser(data.email);
-                              changeView('dashboard');
+                            // 1. Transition view IMMEDIATELY upon successful Google token receipt (Optimistic UI)
+                            changeView('dashboard');
+                            setIsFetchingSessions(true);
+
+                            try {
+                              // 2. Fetch user profile and sessions in the background
+                              const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                                headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
+                              });
+                              const data = await res.json();
+                              if (data.email) {
+                                setUserEmail(data.email);
+                                sessionStorage.setItem('user_email', data.email);
+                                await loadSessionsForUser(data.email);
+                              }
+                            } catch (err) {
+                              console.error("Login background sync error:", err);
+                            } finally {
+                              setIsFetchingSessions(false);
                             }
                           }
                         },
@@ -833,78 +843,86 @@ export default function App() {
 
           {currentView === 'dashboard' && (
             <div className="student-dashboard">
-              <div className="dashboard-top-row">
-                <div>
-                  <h2 className="dash-welcome-title">Your Interview Command Center</h2>
-                  <p className="dash-subtitle-text">Track your progress, review past simulations, and manage active sessions.</p>
+              {isFetchingSessions ? (
+                <div style={{ textAlign: 'center', padding: '6rem 0', color: '#22d3ee' }}>
+                  <p style={{ fontSize: '1.25rem', fontWeight: 600 }}>⚡ Loading your Interview Command Center...</p>
                 </div>
-                <div className="dashboard-action-buttons">
-                  <button
-                    className="start-interview-btn resume-btn"
-                    onClick={handleResumeSession}
-                    style={!hasSessions ? { background: '#1e293b', color: '#64748b', borderColor: '#334155', boxShadow: 'none', cursor: 'not-allowed' } : {}}
-                  >
-                    ⚡ Resume Last Session
-                  </button>
-                  <button className="start-interview-btn new-btn" onClick={handleNewInterview}>
-                    ✨ Start New Interview
-                  </button>
-                </div>
-              </div>
+              ) : (
+                <>
+                  <div className="dashboard-top-row">
+                    <div>
+                      <h2 className="dash-welcome-title">Your Interview Command Center</h2>
+                      <p className="dash-subtitle-text">Track your progress, review past simulations, and manage active sessions.</p>
+                    </div>
+                    <div className="dashboard-action-buttons">
+                      <button
+                        className="start-interview-btn resume-btn"
+                        onClick={handleResumeSession}
+                        style={!hasSessions ? { background: '#1e293b', color: '#64748b', borderColor: '#334155', boxShadow: 'none', cursor: 'not-allowed' } : {}}
+                      >
+                        ⚡ Resume Last Session
+                      </button>
+                      <button className="start-interview-btn new-btn" onClick={handleNewInterview}>
+                        ✨ Start New Interview
+                      </button>
+                    </div>
+                  </div>
 
-              <div className="stats-row">
-                <div className="stat-card">
-                  <h3>Average Score</h3>
-                  <div className="stat-value">{avgScore}</div>
-                  <p className="stat-trend">{hasSessions ? '+5% from last session' : 'Awaiting your first session'}</p>
-                </div>
-                <div className="stat-card">
-                  <h3>Simulations Completed</h3>
-                  <div className="stat-value">{totalSimulations}</div>
-                  <p className="stat-trend">{hasSessions ? 'Active tracking enabled' : 'No simulations recorded'}</p>
-                </div>
-                <div className="stat-card">
-                  <h3>Readiness Tier</h3>
-                  <div className="stat-value" style={{ color: hasSessions ? '#22d3ee' : '#64748B' }}>{readinessTier}</div>
-                  <p className="stat-trend">{hasSessions ? 'Calibrated session data' : 'Complete a session to calibrate'}</p>
-                </div>
-              </div>
+                  <div className="stats-row">
+                    <div className="stat-card">
+                      <h3>Average Score</h3>
+                      <div className="stat-value">{avgScore}</div>
+                      <p className="stat-trend">{hasSessions ? '+5% from last session' : 'Awaiting your first session'}</p>
+                    </div>
+                    <div className="stat-card">
+                      <h3>Simulations Completed</h3>
+                      <div className="stat-value">{totalSimulations}</div>
+                      <p className="stat-trend">{hasSessions ? 'Active tracking enabled' : 'No simulations recorded'}</p>
+                    </div>
+                    <div className="stat-card">
+                      <h3>Readiness Tier</h3>
+                      <div className="stat-value" style={{ color: hasSessions ? '#22d3ee' : '#64748B' }}>{readinessTier}</div>
+                      <p className="stat-trend">{hasSessions ? 'Calibrated session data' : 'Complete a session to calibrate'}</p>
+                    </div>
+                  </div>
 
-              <div className="history-section">
-                <h3 className="section-title">Recent Session History</h3>
-                {hasSessions ? (
-                  <div className="history-list">
-                    {sessions.map((session) => (
-                      <div key={session.id} className="history-item">
-                        <div>
-                          <strong>{session.title}</strong>
-                        </div>
-                        <div className="history-right-group">
-                          <div className={`history-score ${session.grade}`}>{session.score}%</div>
-                          <button
-                            className="view-report-btn"
-                            onClick={() => setSelectedFeedback({
-                              sessionTitle: session.title,
-                              sessionScore: session.score,
-                              messages: session.messages || [],
-                              report: session.feedback
-                            })}
-                          >
-                            View Feedback Report
-                          </button>
-                        </div>
+                  <div className="history-section">
+                    <h3 className="section-title">Recent Session History</h3>
+                    {hasSessions ? (
+                      <div className="history-list">
+                        {sessions.map((session) => (
+                          <div key={session.id} className="history-item">
+                            <div>
+                              <strong>{session.title}</strong>
+                            </div>
+                            <div className="history-right-group">
+                              <div className={`history-score ${session.grade}`}>{session.score}%</div>
+                              <button
+                                className="view-report-btn"
+                                onClick={() => setSelectedFeedback({
+                                  sessionTitle: session.title,
+                                  sessionScore: session.score,
+                                  messages: session.messages || [],
+                                  report: session.feedback
+                                })}
+                              >
+                                View Feedback Report
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    ) : (
+                      <div className="empty-history-state">
+                        <p className="empty-history-text">No sessions taken yet. Click below to start your first session.</p>
+                        <button className="start-first-interview-btn" onClick={handleNewInterview}>
+                          Start Your First Interview Now
+                        </button>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="empty-history-state">
-                    <p className="empty-history-text">No sessions taken yet. Click below to start your first session.</p>
-                    <button className="start-first-interview-btn" onClick={handleNewInterview}>
-                      Start Your First Interview Now
-                    </button>
-                  </div>
-                )}
-              </div>
+                </>
+              )}
             </div>
           )}
 
